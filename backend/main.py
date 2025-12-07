@@ -1,7 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from passlib.context import CryptContext
 import sys
 import os
 import logging
@@ -10,10 +9,12 @@ import logging
 try:
     from .database import engine, get_db, Base
     from . import models
+    from .seed import run as run_seed
 except ImportError:
     sys.path.append(os.path.dirname(__file__))
     from database import engine, get_db, Base  # type: ignore
     import models  # type: ignore
+    from seed import run as run_seed  # type: ignore
 
 # 添加模块路径
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -51,109 +52,10 @@ app.include_router(api_doctor_router)
 app.include_router(api_ai_consult_router)
 app.include_router(api_profile_router)
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-def get_password_hash(password):
-    return pwd_context.hash(password)
-
 @app.on_event("startup")
-def create_default_admin():
-    db = next(get_db())
-    admin = db.query(models.User).filter(models.User.role == models.UserRole.admin).first()
-    if not admin:
-        hashed_pwd = get_password_hash("admin")
-        new_admin = models.User(
-            phone="13800138000",
-            password=hashed_pwd,
-            role=models.UserRole.admin,
-            status=models.UserStatus.active
-        )
-        db.add(new_admin)
-        db.commit()
-        print("Default admin created: 13800138000 / admin")
-
-@app.on_event("startup")
-def create_default_doctor_and_schedules():
-    db = next(get_db())
-    doctor = db.query(models.User).filter(models.User.role == models.UserRole.doctor).first()
-    if not doctor:
-        hashed_pwd = get_password_hash("doctor")
-        doctor = models.User(
-            phone="13900000000",
-            password=hashed_pwd,
-            role=models.UserRole.doctor,
-            status=models.UserStatus.active
-        )
-        db.add(doctor)
-        db.commit()
-        db.refresh(doctor)
-        profile = models.DoctorProfile(
-            user_id=doctor.id,
-            name="示例医生",
-            department="内科",
-            title="主治医师",
-            hospital="示例医院"
-        )
-        db.add(profile)
-        db.commit()
-        print("Default doctor created: 13900000000 / doctor")
-
-    from datetime import date, timedelta, time
-    today = date.today()
-    for i in range(0, 7):
-        d = today + timedelta(days=i)
-        am_exists = db.query(models.DoctorSchedule).filter(
-            models.DoctorSchedule.doctor_id == doctor.id,
-            models.DoctorSchedule.date == d,
-            models.DoctorSchedule.start_time == time(9, 0)
-        ).first()
-        if not am_exists:
-            am = models.DoctorSchedule(
-                doctor_id=doctor.id,
-                date=d,
-                start_time=time(9, 0),
-                end_time=time(12, 0),
-                capacity=0,
-                booked_count=0,
-                status=models.ScheduleStatus.open
-            )
-            db.add(am)
-        pm_exists = db.query(models.DoctorSchedule).filter(
-            models.DoctorSchedule.doctor_id == doctor.id,
-            models.DoctorSchedule.date == d,
-            models.DoctorSchedule.start_time == time(13, 0)
-        ).first()
-        if not pm_exists:
-            pm = models.DoctorSchedule(
-                doctor_id=doctor.id,
-                date=d,
-                start_time=time(13, 0),
-                end_time=time(17, 0),
-                capacity=0,
-                booked_count=0,
-                status=models.ScheduleStatus.open
-            )
-            db.add(pm)
-    db.commit()
-
-    # 建立未来一个月的日期表（按天聚合容量）
-    for i in range(0, 30):
-        d = today + timedelta(days=i)
-        exists_day = db.query(models.DoctorDaySchedule).filter(
-            models.DoctorDaySchedule.doctor_id == doctor.id,
-            models.DoctorDaySchedule.date == d
-        ).first()
-        if not exists_day:
-            dayrow = models.DoctorDaySchedule(
-                doctor_id=doctor.id,
-                date=d,
-                am_capacity=0,
-                am_booked_count=0,
-                pm_capacity=0,
-                pm_booked_count=0,
-            )
-            db.add(dayrow)
-    db.commit()
+def seed_defaults():
+    # 让启动流程等价于“迁移+seed”，确保结构和默认账号存在
+    run_seed()
 
 @app.get("/")
 def read_root():
